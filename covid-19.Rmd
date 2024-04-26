@@ -1,0 +1,359 @@
+---
+title: "covid-19"
+author: "Jamil Garro"
+date: "4/23/2024"
+output: pdf_document
+---
+
+
+
+
+## Datasets
+
+The datasets come from the Johns Hopkins University Center for Systems Science and Engineering (JHU CSSE). 4 datasets are considerded: 
+
+confirmed us cases
+confirmed global cases
+confirmed us deaths
+confirmed global deaths
+
+
+The datasets registered the official numbers of cases of COVID-19 and the deaths from it in USA and the world from the beginning of the pandemic by country and by county.
+
+
+## objectives
+
+Determine worst states in the USA by number of cases
+Determine months that have largest occurence of new cases in USA
+Determine 15 countries that has worst numbers by death cases
+A model to determine the relationship between new cases and new deaths in Lebanon
+
+
+## Pre-processing
+
+```{r setup, include=TRUE, echo=TRUE, eval=TRUE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Packages
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+```
+
+
+## Data
+
+From https://raw.githubusercontent.com/CSSEGISandData/COVID-19
+https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/state/totals/
+
+import and read:
+
+```{r}
+url_base <- c('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/')
+us_cases <- read_csv(paste(url_base,'time_series_covid19_confirmed_US.csv',sep = ""))
+us_deaths <- read_csv(paste(url_base,'time_series_covid19_deaths_US.csv',sep = ""))
+global_cases <- read_csv(paste(url_base,'time_series_covid19_confirmed_global.csv',sep = ""))
+global_deaths <- read_csv(paste(url_base,'time_series_covid19_deaths_global.csv',sep = ""))
+us_pop <- read.csv("https://www2.census.gov/programs-surveys/popest/datasets/2010-2020/state/totals/nst-est2020-alldata.csv", stringsAsFactors = FALSE)
+uid <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv")
+```
+
+
+
+## Data tidying
+
+### Exploring
+
+```{r}
+head(us_cases, n=5)
+head(global_cases, n=5)
+head(us_deaths, n=5)
+head(global_deaths, n=5)
+```
+
+### tidying
+
+objectives are to convert date columns into date row, formating the date and deleting unwanted columns from the 4 datasets.
+
+```{r}
+us_cases <- us_cases %>% 
+  pivot_longer(-c("UID", "iso2", "iso3", "code3", "FIPS", "Admin2", "Province_State", "Country_Region", 
+                  "Lat", "Long_", "Combined_Key"), 
+               names_to = "Date", values_to = "Confirmed") %>% 
+  mutate(Date = as.Date(Date, format ="%m/%d/%y")) %>% 
+  select (Admin2:Confirmed) %>% select(-c(Lat, Long_, Combined_Key))
+```
+
+```{r}
+us_deaths <- us_deaths %>% 
+  pivot_longer(-c("UID", "iso2", "iso3", "code3", "FIPS", "Admin2", "Province_State", "Country_Region", 
+                  "Lat", "Long_", "Combined_Key"), 
+               names_to = "Date", values_to = "Deaths") %>% 
+  mutate(Date = as.Date(Date, format ="%m/%d/%y")) %>% 
+  select (Admin2:Deaths) %>% select(-c(Lat, Long_, Combined_Key))
+```
+
+```{r}
+global_cases <- global_cases %>% 
+  pivot_longer(-c("Province/State", "Lat", 
+                  "Long","Country/Region"), 
+               names_to = "Date", values_to = "Confirmed") %>%   select("Country/Region", "Date","Confirmed")
+```
+
+```{r}
+global_deaths <- global_deaths %>% 
+  pivot_longer(-c("Province/State", "Lat", 
+                  "Long","Country/Region"), 
+               names_to = "Date", values_to = "Deaths") %>%  select("Country/Region", "Date","Deaths")
+```
+
+
+## Data analysis
+
+
+### States in USA with worst cases per 100,000 population:
+
+In order to do that, us_cases and us_deaths will be join into the same dataset, will be added to them population by state, maximum cases by state will be determine, cases by 100k population.
+
+
+```{r}
+us_covid <- us_cases %>% 
+  left_join(us_deaths, by = c("Admin2", "Province_State", "Country_Region","Date"))
+us_pop_tidy <- us_pop %>% 
+  select(c(NAME, POPESTIMATE2020)) %>% 
+  rename(Province_State = NAME, Population = POPESTIMATE2020)
+us_covid_pop <- us_covid %>% 
+  left_join(us_pop_tidy, by = c("Province_State"))
+cases_long_max <- us_cases %>% 
+  group_by(Province_State) %>% 
+  summarise(max_cases = max(Confirmed))
+us_covid_max <- cases_long_max %>% 
+  left_join(us_pop_tidy, by = c("Province_State"))
+cases_long_max <- us_cases %>% 
+  group_by(Province_State) %>% 
+  summarise(max_cases = max(Confirmed))
+us_covid_max_per100k <- us_covid_max %>% 
+  mutate(cases_per_100k = max_cases/Population * 100000) %>% arrange(desc(cases_per_100k)) %>% 
+  slice_max(cases_per_100k, n=25)
+```
+
+```{r}
+us_covid_max_per100k
+```
+
+
+
+### months which had worst Covid-19 cases
+
+US cases data set will be used as base and data will be aggregated based on month of the year
+
+
+```{r}
+us_covid_pop_new_cases <- us_covid_pop  %>% 
+  mutate(new_cases = Confirmed - lag(Confirmed)) %>% 
+  mutate(Date = as.Date(Date,"%m/%d/%y"))
+us_covid_pop_new_cases_worst <- us_covid_pop_new_cases %>% 
+  mutate(yearmon = floor_date(Date, unit = "month")) %>% 
+  group_by(yearmon) %>% 
+  summarise(sum = sum(new_cases, default=0)) %>% 
+  filter(sum > 0)
+```
+
+
+
+### countries with worst deaths per 100K population
+
+
+Both global cases and deaths will be combined to get a complete dataset, will also be joined by global population dataset, will be aggregated at country level and maximum number of deaths per 100K population.
+
+```{r}
+global_covid <- global_cases %>% left_join(global_deaths, by = c("Country/Region","Date"))
+global_population_tidy <- uid %>% 
+  filter(is.na(Province_State)) %>% 
+  select("Country_Region","Population") %>% 
+  rename("Country/Region" = Country_Region)
+global_covid_pop <- global_covid %>% 
+  left_join(global_population_tidy, by =c("Country/Region"))
+global_covid_pop_maxdeaths <- global_covid_pop %>% 
+  rename(Country=  "Country/Region") %>% 
+  group_by(Country) %>% 
+  summarise(max_deaths = max(Deaths)) %>% 
+  rename(`Country/Region`= Country) %>% 
+  left_join(global_population_tidy, by = "Country/Region") %>%
+  mutate(deaths_per_100k = max_deaths/Population * 100000) %>%
+  slice_max(deaths_per_100k, n=25)
+```
+
+
+```{r}
+global_covid_pop_maxdeaths
+```
+
+
+### relationship between Lebanon's new death rate and new cases
+
+New cases and deaths for Lebanon will be determined on daily basis from global dataset
+
+
+```{r}
+lebanon_cases <- global_covid_pop %>% 
+  filter(str_detect(`Country/Region`, 'Lebanon'))
+lebanon_new_cases_deaths <- lebanon_cases %>% 
+  mutate(new_cases = Confirmed - lag(Confirmed)) %>% 
+  mutate(new_deaths = Deaths - lag(Deaths)) %>% drop_na(new_cases) %>% drop_na(new_deaths) %>% 
+  mutate(Date = as.Date(Date,"%m/%d/%y"))
+lebanon_model <- lm(new_deaths ~ new_cases, data= lebanon_new_cases_deaths)
+lebanon_new_cases_deaths_pred <- lebanon_new_cases_deaths %>% mutate(pred = predict(lebanon_model))
+```
+
+
+## Data visualization
+
+### the theme
+
+```{r}
+theme_shooting <- function() {
+    theme_minimal() +
+theme(
+    text = element_text(color = "gray25"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(color = "gray30"),
+    plot.background = element_rect(fill = "gray95"),
+    plot.margin = unit(c(5, 10, 5, 10), units = "mm")
+  )
+}
+```
+
+
+### Year-Month in USA with worst cases per 100,000 population
+
+```{r}
+ggplot(data = us_covid_pop_new_cases_worst) + 
+  geom_line(aes(x = yearmon, y = sum), size = 2, color = "Blue") + 
+  scale_y_log10() + 
+  scale_x_date(date_labels = "%Y-%m", 
+               breaks = seq(from = as.Date("2020-01-01"), 
+                            to = as.Date("2023-02-01"), by = "6 months")) +
+  labs(
+    x = "Year-Month",
+    y = "Covid-19 Cases",
+    title = "Monthly Aggregated Trend of Covid-19 Cases in United States",
+    subtitle = "Peak wave occured during late 2021 and early 2022",
+    caption = "Data source: Johns Hopkins University, 2024"
+  ) + theme_shooting()
+```
+
+
+### States with worst cases per 100K population
+
+```{r}
+ggplot(data = us_covid_max_per100k, 
+       aes(x = reorder(Province_State, cases_per_100k), 
+           y = cases_per_100k)) + 
+  geom_bar(stat = "identity", fill = "blue") + labs(
+    x = "States in USA",
+    y = "Cases per 100K population",
+    title = "States with worst cases per 100K populutaion",
+    subtitle = "Top 25 states with highest cases per 100k population",
+    caption = "Data source: Johns Hopkins University"
+  ) + coord_flip() + theme_shooting()
+```
+
+
+### Countries with worst s per 100K population
+
+```{r}
+library(stringr)
+ggplot(global_covid_pop_maxdeaths, aes(x = reorder(`Country/Region`, deaths_per_100k) , 
+                                       y = deaths_per_100k, fill = deaths_per_100k)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Country", y = "Deaths per 100k due to Covid", 
+       title = "Deaths per 100k due to Covid by Country") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5, size = 16),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size = 10, angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        panel.background = element_rect(fill = "grey95"),
+        panel.grid = element_blank(),
+        plot.background = element_rect(fill = "gray95")) +
+  scale_fill_gradient(low = "#FFC2C2", high = "#C40000") +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10)) 
+```
+
+
+### Lebanon's new deaths on time series
+
+
+```{r}
+ggplot(data = lebanon_new_cases_deaths ) + 
+  geom_point(aes(x = Date, y = new_deaths), color="Blue") + labs(
+    x = "Date",
+    y = "New deaths on daily basis",
+    title = "Lebanon: New deaths on time series",
+    subtitle = "Deaths had a significant peak durng delta covid wave in beginning-2021",
+    caption = "Data source: Johns Hopkins University"
+  )  + theme_shooting()
+```
+
+
+
+## Analyzing the relationship between new deaths and new cases in Lebanon
+
+
+```{r}
+lebanon_model <- lm(new_deaths ~ new_cases, data= lebanon_new_cases_deaths)
+```
+
+```{r}
+lebanon_model
+```
+
+```{r}
+summary(lebanon_model)
+```
+
+The p-value of the model is significantly less than .05 indicating that model should be able to accurately predict the count of new deaths based on new cases. Based on above, there is a significant relationship between new deaths and new cases in Lebanon.
+
+```{r}
+lebanon_new_cases_deaths_pred <- lebanon_new_cases_deaths %>% mutate(pred = predict(lebanon_model))
+```
+
+### Plotting the model performance
+
+```{r}
+ggplot(data = lebanon_new_cases_deaths_pred ) + 
+  geom_point(aes(x = Date, y = new_deaths), 
+             color="Blue") + 
+  geom_point(aes(x = Date, y = pred), color="Red") + 
+  labs(
+    x = "Date",
+    y = "New deaths on daily basis",
+    title = "Linear Model: Predicts close relationship between new cases and deaths",
+    subtitle = "Predicted deaths are close to actual deaths",
+    caption = "Data source: Johns Hopkins University"
+  )  + theme_shooting()
+```
+
+
+## Data bias
+
+Data could be biased at the level of collection. Data is collected from covid-19 centers, not all occurrences may be registered and registration could differ from country to country. So under or over reporting may occur depending on the process of registration. Inconsistencies and errors may occur.
+
+
+## Conclusion
+
+The model that we've tested show that a high correlation coefficient between new deaths and new cases in Lebanon exists suggesting that the two variables are closely related. The two variables shows similar patterns over time.
+
+USA witnessed two peaks in COVID cases between December 2020 to January 2021 and December 2021 to January 2022 which suggests that the pandemic was at its peak during that time.
+
+These conclusions goes with a lot of patterns related to Covid-19 such as increase in lock-down policies by the states and shortages of medical supplies.
+

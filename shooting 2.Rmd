@@ -1,0 +1,278 @@
+---
+title: "NYPD shooting"
+author: "Jamil Garro"
+date: "4/15/2024"
+output: pdf_document
+---
+
+## Objective and dataset
+
+### Dataset
+
+List of all the shooting that occurs in New York city from 2006 to 2022.
+Published by New York city.
+27000 rows and 21 columns.
+
+### Objective
+
+Yearly trends about shooting incidents in New York city.
+Time of day incidence occurrence.
+Day of week incidence occurring.
+
+
+## Preparation
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+### R packages
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(tidyverse)
+library(lubridate)
+```
+
+
+### Data import
+
+From: 
+https://catalog.data.gov/dataset?q=NYPD+shooting+incident&sort=views_recent+desc&ext_location=&ext_bbox=&ext_prev_extent=
+
+```{r}
+url <- c('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD')
+shooting <- read_csv(url)
+```
+
+
+
+## Exploration and tidying of data
+
+### Exploration
+
+Summary
+
+```{r tidy=TRUE}
+summary(shooting)
+```
+
+Sample data
+
+```{r}
+head(shooting, n=5)
+```
+
+## Tidying
+
+#### Removal of unnecessary information
+
+
+```{r tidy=TRUE}
+shooting_tidy <- shooting %>% select(-c(X_COORD_CD,Y_COORD_CD,Latitude,Longitude,Lon_Lat))
+```
+
+
+removal of perpetrator info that are unuselful for our analysis
+
+```{r tidy=TRUE}
+shooting_tidy <- shooting_tidy %>% 
+  select(-c(PERP_AGE_GROUP,PERP_SEX,PERP_RACE)) %>%
+  select(-c(LOCATION_DESC,JURISDICTION_CODE,LOCATION_DESC))
+```
+
+
+converting date to date format
+
+```{r tidy=TRUE}
+shooting_tidy$OCCUR_DATE <- as.Date(shooting_tidy$OCCUR_DATE,
+                                    format = "%m/%d/%Y")
+```
+
+
+
+## Data analysis
+
+### Day of shooting incidents
+
+Will be studied the relation between day of occurrence of incidence against number of occurrence of incidence. A new variable will be created "day of week".
+
+
+```{r tidy=TRUE}
+shooting_dayofweek <- shooting_tidy %>%
+  mutate(day_of_week = wday(OCCUR_DATE, week_start = 1))
+```
+
+Aggregate of shooting on the different days of the week will be calculated. 
+
+
+```{r tidy=TRUE}
+shooting_dayofweek_agg <- shooting_dayofweek %>% group_by(day_of_week) %>%
+  summarize(count = n())
+```
+
+
+### Trends of shooting per years
+
+Will be analyzed if there is any yearly trends in shooting incidents. Year of occurence will be derived.
+
+```{r tidy=TRUE}
+shooting_year <- shooting_tidy %>% mutate(year = year(OCCUR_DATE))
+```
+
+
+total account for year and gender will be calculated.
+
+```{r tidy=TRUE}
+shooting_year_agg <- shooting_year %>%
+  group_by(victim_gender = VIC_SEX, year = year(OCCUR_DATE)) %>%
+  summarize(count = n())
+```
+
+
+### incidence by time of the day
+
+Will be analyzed shooting incidence occurrence by time of the day, a new column will be created related to time of the day of the shooting.
+
+```{r tidy=TRUE}
+shooting_hour <- shooting_tidy %>%
+  mutate(hour = format(as.POSIXct(OCCUR_TIME,format="%H:%M:%S"),"%H"))
+```
+
+
+Now the sum of shooting by hour of the day.
+
+```{r tidy=TRUE}
+shooting_hour_agg <- shooting_hour %>% group_by(hour) %>%
+  summarize(count = n())
+```
+
+
+## Visualisation of data
+
+### theme for visualisation
+
+```{r tidy=TRUE}
+theme_shooting <- function() {theme_minimal() +
+    theme(text = element_text(color="gray25"),
+          plot.subtitle = element_text(size = 12),
+          plot.caption = element_text(color = "gray30"),
+          plot.background = element_rect(fill = "gray95"),
+          plot.margin = unit(c(5, 10, 5, 10), units = "mm"))}
+```
+
+
+### historical trend by years and by gender
+
+```{r tidy=TRUE}
+ggplot(data = shooting_year_agg, aes(x = year, y = count, fill=victim_gender))+
+  geom_bar(stat = "identity") +
+  labs(x = "Year", y = "Count of Shooting Incidents",
+       title = "Most victims are Male, Resurgence of shooting since 2020",
+       subtitle = "Shooting incidents in New York City 2006-2022",
+       caption = "Data source: NYPD, 2024") + theme_shooting()
+```
+
+
+### day of occurence of shooting
+
+```{r tidy=TRUE}
+ggplot(data = shooting_dayofweek_agg,aes(x = day_of_week, y = count)) +
+  geom_line(color = "blue", size =1.5) +
+  scale_x_continuous(breaks = shooting_dayofweek_agg$day_of_week,
+                     labels = shooting_dayofweek_agg$day_of_week) +
+  labs(x = "Day of Week, 1= Monday .. 7 = Sunday",
+       y = "Count of Shooting Incidents", title = "Shooting occurs lot more on Weekends",
+       subtitle = "Shooting incidents in New York City 2006-2022",
+       caption = "Data source: NYPD, 2024") + theme_shooting()
+```
+
+### shooting by hour of the day
+
+```{r tidy=TRUE}
+ggplot(data = shooting_hour_agg, aes(x = reorder(hour, count), y = count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(x = "Hour of the day (00 - 24)",
+       y = "Count of Shooting Incidents",
+       title = "Most incidents occur between 9 PM to 3 AM",
+       subtitle = "Shooting incidents in New York City 2006-2022",
+       caption = "Data source: NYPD, 2024") + theme_shooting() + coord_flip()
+```
+
+
+## Model: day of occurence of shooting
+
+### week-end variable
+
+This is a variable that assess if shooting occurred on week-end vs normal day of the week.
+
+```{r tidy=TRUE}
+shooting_dow_agg <- mutate(shooting_dayofweek_agg,
+                           is_weekendd = ifelse(shooting_dayofweek_agg$day_of_week < 6,0,1))
+```
+
+### Creating a linear model
+
+to predict relationship between is_weekend and count of shooting incidents
+
+```{r tidy=TRUE}
+shooting_model <- lm(is_weekendd ~ count, data=shooting_dow_agg)
+```
+
+the model
+
+```{r tidy=TRUE}
+shooting_model
+```
+
+performance of the model
+
+```{r tidy=TRUE}
+summary(shooting_model)
+```
+
+
+Discussing the model
+
+The p_value of the model is approximately 0.0011 well below 0.05 which gives validity to the model. There is a significant relationship between number of shooting incidents and day of week.
+
+
+### comparing linear model to actual shooting incidents
+
+```{r tidy=TRUE}
+shooting_dow_agg <- shooting_dow_agg %>% mutate(pred = predict(shooting_model))
+```
+
+### model performance
+
+```{r tidy=TRUE}
+ggplot(data = shooting_dow_agg) + geom_line(color = "blue",
+                                            size =1.5, aes(x = shooting_dow_agg$is_weekendd, y= shooting_dow_agg$count)) +
+  geom_line(color = "red", size =1.5, aes(x = shooting_dow_agg$pred, 
+                                          y= shooting_dow_agg$count)) +
+  labs(x = "Day of Week, 0 = Weekday .. 1 = Weekend",
+       y = "Count of Shooting Incidents",
+       title = "Model is able to predict day of week based on shooting incident count",
+       subtitle = "Shooting incidents in New York City 2006-2022",
+       caption = "Data source: NYPD, 2024") + theme_shooting()
+```
+
+## data bias
+
+Information in this data set are provided by NYPD, so it only register data that were reported to the police. If there was a lot of shooting incidents that were not reported to the police, a bias could exist.
+
+If shooting incidents were not registered at the actual time of occurrence but only at a rounding time, a bias could occur as in this study we are considering the time of occurrence specifically.
+
+
+## conclusion
+
+According to this study it appears that most of the shooting significantly occurred on week-end. It appears that activity of population increase in week-end and so the occurrence of shooting incidents.
+
+Most victims are males. It appears in this study that more than 80% of victims are males. Males are more likely to  be involved in violent activities.
+
+Violence and shooting incidences has significantly increased from 2020 till now as clarified by this study, reasons for that are not known but it might be related to  the COVID 19 pandemic.
